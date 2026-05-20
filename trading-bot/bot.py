@@ -270,7 +270,8 @@ def run_bot():
         log.info(f"--- [{symbol}] ---")
         sym = get_sym_state(symbol)
         try:
-            df = _df_cache.get(symbol) or compute_indicators(get_bars(symbol))
+            cached = _df_cache.get(symbol)
+            df = cached if cached is not None else compute_indicators(get_bars(symbol))
             current_price = float(df.iloc[-1]["close"])
             rsi = float(df.iloc[-1]["rsi"])
             trend_ok = current_price > float(df.iloc[-1]["trend_sma"])
