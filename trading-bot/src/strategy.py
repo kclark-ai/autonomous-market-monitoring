@@ -4,12 +4,16 @@ from src.config import (
     RSI_OVERSOLD, RSI_OVERBOUGHT,
     SMA_SHORT, SMA_LONG, TREND_SMA,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL_PERIOD,
-    MIN_HOLD_BARS, COOLDOWN_BARS
+    MIN_HOLD_BARS, COOLDOWN_BARS, ATR_PERIOD,
 )
+import src.logger as logger
+
+log = logger.get(__name__)
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=ATR_PERIOD)
     df["rsi"] = ta.rsi(df["close"], length=14)
     df["sma_short"] = ta.sma(df["close"], length=SMA_SHORT)
     df["sma_long"] = ta.sma(df["close"], length=SMA_LONG)
@@ -44,14 +48,16 @@ def get_signal(
 
     ma_cross_up = p_sma_s <= p_sma_l and c_sma_s > c_sma_l
     ma_cross_down = p_sma_s >= p_sma_l and c_sma_s < c_sma_l
-    macd_bullish = macd_hist > 0
-    macd_bearish = macd_hist < 0
+    prev_macd_hist = float(prev["macd_hist"])
+    macd_bullish = macd_hist > 0 and macd_hist > prev_macd_hist
+    macd_bearish = macd_hist < 0 and macd_hist < prev_macd_hist
     in_uptrend = price > trend_sma
 
     if in_position:
         if bars_held < MIN_HOLD_BARS:
             return "hold"
-        if rsi > RSI_OVERBOUGHT or ma_cross_down or macd_bearish:
+        conditions_met = sum([rsi > RSI_OVERBOUGHT, ma_cross_down, macd_bearish])
+        if conditions_met >= 2:
             return "sell"
         return "hold"
 
@@ -60,7 +66,7 @@ def get_signal(
     if not in_uptrend:
         return "hold"
 
-    rsi_dip = rsi < RSI_OVERSOLD
+    rsi_dip = rsi < RSI_OVERSOLD and macd_bullish
     ma_bounce = ma_cross_up and macd_bullish
 
     if rsi_dip or ma_bounce:

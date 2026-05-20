@@ -14,6 +14,9 @@ _state = {
     "errors": [],
 }
 
+_pending_symbols: set[str] = set()
+_approved_symbols: set[str] = set()
+
 
 def get():
     with _lock:
@@ -73,3 +76,24 @@ def add_error(msg: str):
     with _lock:
         _state["errors"].insert(0, {"time": datetime.now().strftime("%H:%M:%S"), "msg": msg})
         _state["errors"] = _state["errors"][:10]
+
+
+def add_pending_symbol(symbol: str):
+    with _lock:
+        _pending_symbols.add(symbol)
+
+
+def approve_symbol(symbol: str):
+    with _lock:
+        _approved_symbols.add(symbol)
+        _pending_symbols.discard(symbol)
+
+
+def get_pending_symbols() -> set[str]:
+    with _lock:
+        return set(_pending_symbols)
+
+
+def get_approved_symbols() -> set[str]:
+    with _lock:
+        return set(_approved_symbols)

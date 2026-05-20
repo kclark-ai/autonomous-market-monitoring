@@ -1,6 +1,10 @@
-alpaca-trade-api==3.3.2
-pandas==2.2.2
-pandas-ta==0.3.14b0
-requests==2.31.0
-python-dotenv==1.0.1
-schedule==1.2.1
+alpaca-py>=0.43.0
+flask>=3.0.0
+pandas>=2.2.0
+pandas-ta>=0.3.14b0
+requests>=2.31.0
+python-dotenv>=1.0.0
+schedule>=1.2.0
+yfinance>=0.2.0
+plotly>=5.0.0
+feedparser>=6.0.0
