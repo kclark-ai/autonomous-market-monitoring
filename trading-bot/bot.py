@@ -27,6 +27,7 @@ from src.risk import (
 from src.options import buy_call, check_options_positions, get_open_option_symbols
 from src.news import get_news_signal, check_spacex_ipo
 from src.market_filters import run_all_filters
+from src.crypto import run_crypto_tick, load_state as load_crypto_state
 import src.state as state
 import src.notify as notify
 from src.dashboard import start_dashboard
@@ -379,6 +380,19 @@ def run_bot():
     _save_sym_state()
 
 
+def _run_crypto():
+    """Hourly crypto tick — runs 24/7, no market-hours gate."""
+    if not state.is_running():
+        return
+    try:
+        account = get_account()
+        cash = float(account.cash)
+        run_crypto_tick(cash)
+    except Exception as e:
+        log.exception("Crypto tick error")
+        state.add_error(f"Crypto: {e}")
+
+
 def get_local_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -398,6 +412,7 @@ def main():
 
     _load_sym_state()
     _reconcile_positions()
+    load_crypto_state()
 
     start_dashboard()
     local_ip = get_local_ip()
@@ -407,13 +422,16 @@ def main():
     notify.send(
         f"Trading Bot Started\n"
         f"Watching: {', '.join(WATCHLIST)}\n"
+        f"Crypto: BTC/ETH/SOL/AVAX\n"
         f"Dashboard: http://{local_ip}:8080"
     )
 
     # Fast stop-check loop: every STOP_INTERVAL_MINUTES (default: 1 min)
     schedule.every(STOP_INTERVAL_MINUTES).minutes.do(check_stops)
-    # Full signal scan: hourly
+    # Full equity signal scan: hourly during market hours
     schedule.every().hour.at(":01").do(run_bot)
+    # Crypto scan: hourly, 24/7 (no market-hours gate)
+    schedule.every().hour.at(":03").do(_run_crypto)
 
     while True:
         schedule.run_pending()
