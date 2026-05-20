@@ -11,7 +11,9 @@ from plotly.subplots import make_subplots
 
 from src.config import (
     RSI_OVERSOLD, RSI_OVERBOUGHT, SMA_SHORT, SMA_LONG, TREND_SMA,
-    STOP_LOSS_PCT, TRAILING_STOP_PCT, MIN_HOLD_BARS, COOLDOWN_BARS, POSITION_SIZE_PCT,
+    STOP_LOSS_PCT, TRAILING_STOP_PCT, TAKE_PROFIT_PCT,
+    ATR_HARD_MULT, ATR_TRAIL_MULT, ATR_TP_MULT,
+    MIN_HOLD_BARS, MAX_HOLD_BARS, COOLDOWN_BARS, POSITION_SIZE_PCT,
 )
 from src.strategy import compute_indicators, get_signal
 
@@ -38,6 +40,7 @@ def run_backtest(df: pd.DataFrame, starting_cash: float) -> dict:
     cash = starting_cash
     shares = 0
     entry_price = 0.0
+    entry_atr = 0.0
     entry_time = None
     peak_price = 0.0
     bars_held = 0
@@ -63,9 +66,27 @@ def run_backtest(df: pd.DataFrame, starting_cash: float) -> dict:
             bars_held += 1
             if price > peak_price:
                 peak_price = price
-            hard_stop = entry_price * (1 - STOP_LOSS_PCT)
-            trail_stop = peak_price * (1 - TRAILING_STOP_PCT)
+
+            atr = float(row["atr"]) if "atr" in row and not pd.isna(row["atr"]) else 0.0
+            entry_atr = entry_atr if entry_atr else atr
+            if entry_atr > 0:
+                hard_stop = entry_price - ATR_HARD_MULT * entry_atr
+                trail_stop = peak_price - ATR_TRAIL_MULT * entry_atr
+                take_profit = entry_price + ATR_TP_MULT * entry_atr
+            else:
+                hard_stop = entry_price * (1 - STOP_LOSS_PCT)
+                trail_stop = peak_price * (1 - TRAILING_STOP_PCT)
+                take_profit = entry_price * (1 + TAKE_PROFIT_PCT)
             in_profit = price > entry_price * 1.005
+
+            if price >= take_profit:
+                pnl = (price - entry_price) * shares
+                cash += shares * price
+                trades.append({"entry_time": entry_time, "exit_time": ts, "entry_price": entry_price,
+                                "exit_price": price, "shares": shares, "pnl": pnl, "reason": "Take Profit"})
+                sell_markers.append({"time": ts, "price": price, "reason": "TP"})
+                shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = False; peak_price = 0.0; entry_atr = 0.0
+                continue
 
             if price <= hard_stop:
                 pnl = (price - entry_price) * shares
@@ -73,7 +94,7 @@ def run_backtest(df: pd.DataFrame, starting_cash: float) -> dict:
                 trades.append({"entry_time": entry_time, "exit_time": ts, "entry_price": entry_price,
                                 "exit_price": price, "shares": shares, "pnl": pnl, "reason": "Stop Loss"})
                 sell_markers.append({"time": ts, "price": price, "reason": "SL"})
-                shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = True; peak_price = 0.0
+                shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = True; peak_price = 0.0; entry_atr = 0.0
                 continue
 
             if bars_held >= MIN_HOLD_BARS and price <= trail_stop:
@@ -83,7 +104,16 @@ def run_backtest(df: pd.DataFrame, starting_cash: float) -> dict:
                 trades.append({"entry_time": entry_time, "exit_time": ts, "entry_price": entry_price,
                                 "exit_price": price, "shares": shares, "pnl": pnl, "reason": label})
                 sell_markers.append({"time": ts, "price": price, "reason": label})
-                shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = False; peak_price = 0.0
+                shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = False; peak_price = 0.0; entry_atr = 0.0
+                continue
+
+            if bars_held >= MAX_HOLD_BARS:
+                pnl = (price - entry_price) * shares
+                cash += shares * price
+                trades.append({"entry_time": entry_time, "exit_time": ts, "entry_price": entry_price,
+                                "exit_price": price, "shares": shares, "pnl": pnl, "reason": "Max Hold"})
+                sell_markers.append({"time": ts, "price": price, "reason": "MAX"})
+                shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = False; peak_price = 0.0; entry_atr = 0.0
                 continue
 
             if not in_profit:
@@ -95,7 +125,7 @@ def run_backtest(df: pd.DataFrame, starting_cash: float) -> dict:
                     trades.append({"entry_time": entry_time, "exit_time": ts, "entry_price": entry_price,
                                    "exit_price": price, "shares": shares, "pnl": pnl, "reason": "Signal"})
                     sell_markers.append({"time": ts, "price": price, "reason": "SIG"})
-                    shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = False; peak_price = 0.0
+                    shares = 0; bars_held = 0; bars_since_exit = 0; last_exit_stoploss = False; peak_price = 0.0; entry_atr = 0.0
         else:
             bars_since_exit += 1
             cooldown = bars_since_exit if last_exit_stoploss else 999
@@ -107,6 +137,7 @@ def run_backtest(df: pd.DataFrame, starting_cash: float) -> dict:
                     entry_price = price
                     peak_price = price
                     entry_time = ts
+                    entry_atr = float(row["atr"]) if "atr" in row and not pd.isna(row["atr"]) else 0.0
                     cash -= shares * price
                     bars_held = 0
                     buy_markers.append({"time": ts, "price": price})

@@ -1,8 +1,12 @@
+import math
 from datetime import date, timedelta
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetOptionContractsRequest, MarketOrderRequest
 from alpaca.trading.enums import ContractType, OrderSide, TimeInForce, AssetClass
 from src.config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
+import src.logger as logger
+
+log = logger.get(__name__)
 
 OPTIONS_SIZE_PCT = 0.02
 OPTIONS_TAKE_PROFIT = 0.50
@@ -18,6 +22,21 @@ def _get_client() -> TradingClient:
     if _client is None:
         _client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=_paper)
     return _client
+
+
+def _estimate_premium(current_price: float, strike_price: float, dte: int) -> float:
+    """
+    Rough Black-Scholes-inspired premium estimate for when live quotes aren't available.
+    Uses ~30% implied volatility assumption for typical large-cap equities.
+    Returns estimated cost per contract (already multiplied by 100).
+    """
+    intrinsic = max(0.0, current_price - strike_price)
+    # time value: ATM option ≈ underlying * IV * sqrt(T) where IV≈0.30, T in years
+    t_years = max(dte, 1) / 365.0
+    iv = 0.30
+    time_value = current_price * iv * math.sqrt(t_years) * 0.4  # 0.4 ≈ N(d1) for near-ATM
+    premium_per_share = intrinsic + time_value
+    return premium_per_share * 100  # one contract = 100 shares
 
 
 def find_call_contract(symbol: str, current_price: float) -> object | None:
@@ -37,7 +56,7 @@ def find_call_contract(symbol: str, current_price: float) -> object | None:
         contracts.sort(key=lambda c: (float(c.strike_price), c.expiration_date))
         return contracts[0]
     except Exception as e:
-        print(f"  [OPTIONS] Contract lookup failed for {symbol}: {e}")
+        log.error(f"Contract lookup failed for {symbol}: {e}")
         return None
 
 
@@ -45,33 +64,45 @@ def buy_call(symbol: str, current_price: float, portfolio_value: float) -> bool:
     max_spend = portfolio_value * OPTIONS_SIZE_PCT
     contract = find_call_contract(symbol, current_price)
     if not contract:
-        print(f"  [OPTIONS] No suitable call contract found for {symbol}")
+        log.info(f"[OPTIONS] No suitable call contract found for {symbol}")
         return False
-    estimated_cost = max((current_price - float(contract.strike_price) + (current_price * 0.02)) * 100, 50)
+
+    strike = float(contract.strike_price)
+    dte = (date.fromisoformat(str(contract.expiration_date)) - date.today()).days
+    estimated_cost = _estimate_premium(current_price, strike, dte)
+
     if estimated_cost > max_spend:
-        print(f"  [OPTIONS] {symbol}: estimated cost ${estimated_cost:.0f} exceeds budget ${max_spend:.0f}")
+        log.info(
+            f"[OPTIONS] {symbol}: estimated cost ${estimated_cost:.0f} "
+            f"exceeds budget ${max_spend:.0f}"
+        )
         return False
     try:
         order = _get_client().submit_order(MarketOrderRequest(
-            symbol=contract.symbol, qty=1, side=OrderSide.BUY, time_in_force=TimeInForce.DAY,
+            symbol=contract.symbol, qty=1, side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY,
         ))
-        dte = (date.fromisoformat(str(contract.expiration_date)) - date.today()).days
-        print(f"  [CALL] {contract.symbol}  strike=${contract.strike_price}  exp={contract.expiration_date} ({dte}DTE)")
+        log.info(
+            f"[CALL] {contract.symbol}  strike=${strike}  "
+            f"exp={contract.expiration_date} ({dte}DTE)  "
+            f"est_cost=${estimated_cost:.0f}  order_id={order.id}"
+        )
         return True
     except Exception as e:
-        print(f"  [OPTIONS] Buy call failed for {symbol}: {e}")
+        log.error(f"Buy call failed for {symbol}: {e}")
         return False
 
 
 def close_option(option_symbol: str, qty: int, reason: str) -> bool:
     try:
         _get_client().submit_order(MarketOrderRequest(
-            symbol=option_symbol, qty=qty, side=OrderSide.SELL, time_in_force=TimeInForce.DAY,
+            symbol=option_symbol, qty=qty, side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
         ))
-        print(f"  [OPT EXIT] {option_symbol} x{qty} - {reason}")
+        log.info(f"[OPT EXIT] {option_symbol} x{qty} - {reason}")
         return True
     except Exception as e:
-        print(f"  [OPTIONS] Close failed for {option_symbol}: {e}")
+        log.error(f"Option close failed for {option_symbol}: {e}")
         return False
 
 
@@ -80,7 +111,7 @@ def check_options_positions(sell_signals: set[str]) -> list[dict]:
     try:
         positions = _get_client().get_all_positions()
     except Exception as e:
-        print(f"  [OPTIONS] Failed to fetch positions: {e}")
+        log.error(f"Failed to fetch positions: {e}")
         return closed
     for pos in positions:
         if pos.asset_class != AssetClass.US_OPTION:
