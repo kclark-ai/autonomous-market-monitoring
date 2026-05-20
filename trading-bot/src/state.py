@@ -41,7 +41,17 @@ def update_portfolio(portfolio_value: float, cash: float, daily_pnl: float):
         _state["last_tick"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def update_position(symbol: str, qty: int, entry_price: float, peak_price: float, current_price: float):
+def update_position(
+    symbol: str,
+    qty: int,
+    entry_price: float,
+    peak_price: float,
+    current_price: float,
+    hard_stop: float = 0.0,
+    trail_stop: float = 0.0,
+    take_profit: float = 0.0,
+    entry_atr: float = 0.0,
+):
     with _lock:
         unrealized_pnl = (current_price - entry_price) * qty
         _state["positions"][symbol] = {
@@ -51,6 +61,11 @@ def update_position(symbol: str, qty: int, entry_price: float, peak_price: float
             "current_price": current_price,
             "unrealized_pnl": unrealized_pnl,
             "pct_change": ((current_price - entry_price) / entry_price) * 100,
+            "hard_stop": hard_stop,
+            "trail_stop": trail_stop,
+            "take_profit": take_profit,
+            "entry_atr": entry_atr,
+            "stop_type": "ATR" if entry_atr > 0 else "Fixed",
         }
 
 

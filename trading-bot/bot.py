@@ -292,9 +292,13 @@ def run_bot():
 
                 if current_price > sym["peak_price"]:
                     sym["peak_price"] = current_price
-                state.update_position(symbol, qty, entry_price, sym["peak_price"], current_price)
 
                 hard_stop, trail_stop, take_profit = _get_stop_prices(sym, entry_price)
+                state.update_position(
+                    symbol, qty, entry_price, sym["peak_price"], current_price,
+                    hard_stop=hard_stop, trail_stop=trail_stop, take_profit=take_profit,
+                    entry_atr=sym.get("entry_atr", 0.0),
+                )
                 stop_label = f"ATR×{ATR_HARD_MULT}" if sym.get("entry_atr") else "Fixed"
                 log.info(
                     f"Entry: ${entry_price:.2f} | TP: ${take_profit:.2f} | "
