@@ -1,6 +1,7 @@
 import threading
 from flask import Flask, jsonify, request, Response
 import src.state as state
+from src.risk import get_risk_summary
 
 app = Flask(__name__)
 
@@ -26,9 +27,9 @@ _HTML = """<!DOCTYPE html>
     .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
     .pill-green { background: #1a3a2a; color: #3fb950; }
     .pill-red { background: #3a1a1a; color: #f85149; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-    th { text-align: left; color: #7d8590; font-weight: 500; padding: 4px 6px; border-bottom: 1px solid #30363d; }
-    td { padding: 7px 6px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    th { text-align: left; color: #7d8590; font-weight: 500; padding: 4px 5px; border-bottom: 1px solid #30363d; }
+    td { padding: 6px 5px; border-bottom: 1px solid #21262d; vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
     .btn { display: inline-block; padding: 10px 24px; border-radius: 8px; border: none; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
     .btn-stop { background: #da3633; color: #fff; }
@@ -48,6 +49,8 @@ _HTML = """<!DOCTYPE html>
     <div style="margin-top:12px">
       <div class="row"><span class="stat-label">Cash available</span><span class="stat-value" id="cash">-</span></div>
       <div class="row"><span class="stat-label">Daily P&L</span><span class="stat-value" id="daily-pnl">-</span></div>
+      <div class="row"><span class="stat-label">Daily loss used</span><span class="stat-value" id="daily-loss">-</span></div>
+      <div class="row"><span class="stat-label">Circuit breaker</span><span id="circuit-breaker">-</span></div>
       <div class="row"><span class="stat-label">Bot status</span><span id="bot-status">-</span></div>
       <div class="row"><span class="stat-label">Last tick</span><span class="stat-value gray" id="last-tick">-</span></div>
     </div>
@@ -67,6 +70,10 @@ _HTML = """<!DOCTYPE html>
     <h2>Recent Trades</h2>
     <div id="trades-body"><div class="empty">No trades yet</div></div>
   </div>
+  <div class="card" id="errors-card" style="display:none;border-color:#f85149">
+    <h2 style="color:#f85149">Errors</h2>
+    <div id="errors-body"></div>
+  </div>
 <script>
 function fmt(n,d=2){return n==null?'-':'$'+parseFloat(n).toFixed(d).replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');}
 function colorClass(n){return n>=0?'green':'red';}
@@ -80,14 +87,33 @@ async function refresh(){
     dpnl.textContent=pnlStr(s.daily_pnl);dpnl.className='stat-value '+colorClass(s.daily_pnl);
     document.getElementById('bot-status').innerHTML=s.bot_running?'<span class="pill pill-green">Running</span>':'<span class="pill pill-red">Paused</span>';
     document.getElementById('last-tick').textContent=s.last_tick||'not yet';
+    if(s.risk){
+      const r=s.risk;
+      const dlEl=document.getElementById('daily-loss');
+      dlEl.textContent=`$${r.daily_realized_loss.toFixed(2)} / $${r.daily_loss_limit.toFixed(2)} (${r.daily_loss_pct.toFixed(1)}% of ${r.daily_loss_limit_pct.toFixed(0)}% limit)`;
+      dlEl.className='stat-value '+(r.daily_loss_pct>r.daily_loss_limit_pct*0.75?'red':'gray');
+      document.getElementById('circuit-breaker').innerHTML=r.circuit_breaker_tripped?'<span class="pill pill-red">TRIPPED</span>':'<span class="pill pill-green">OK</span>';
+    }
     document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
     const pos=Object.entries(s.positions||{});
     const posEl=document.getElementById('positions-body');
     if(pos.length===0){posEl.innerHTML='<div class="empty">No open positions</div>';}
     else{
-      let h='<table><thead><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Now</th><th>P&L</th></tr></thead><tbody>';
+      let h='<table><thead><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Now</th><th>P&L</th><th>Hard Stop</th><th>Trail</th><th>TP</th><th>Type</th></tr></thead><tbody>';
       for(const[sym,p]of pos){
-        h+=`<tr><td><b>${sym}</b></td><td>${p.qty}</td><td>${fmt(p.entry_price)}</td><td>${fmt(p.current_price)}</td><td class="${colorClass(p.unrealized_pnl)}">${pnlStr(p.unrealized_pnl)}</td></tr>`;
+        const stopDist=p.hard_stop&&p.current_price?((p.current_price-p.hard_stop)/p.current_price*100).toFixed(1)+'%':'-';
+        const tpDist=p.take_profit&&p.current_price?((p.take_profit-p.current_price)/p.current_price*100).toFixed(1)+'%':'-';
+        h+=`<tr>
+          <td><b>${sym}</b></td>
+          <td>${p.qty}</td>
+          <td>${fmt(p.entry_price)}</td>
+          <td>${fmt(p.current_price)}</td>
+          <td class="${colorClass(p.unrealized_pnl)}">${pnlStr(p.unrealized_pnl)}</td>
+          <td class="red" title="${stopDist} away">${p.hard_stop?fmt(p.hard_stop):'-'}</td>
+          <td class="red" title="trailing">${p.trail_stop?fmt(p.trail_stop):'-'}</td>
+          <td class="green" title="${tpDist} away">${p.take_profit?fmt(p.take_profit):'-'}</td>
+          <td class="gray">${p.stop_type||'-'}</td>
+        </tr>`;
       }
       posEl.innerHTML=h+'</tbody></table>';
     }
@@ -100,6 +126,19 @@ async function refresh(){
         h+=`<tr><td class="gray">${t.time}</td><td>${t.action}</td><td><b>${t.symbol}</b></td><td>${fmt(t.price)}</td><td class="${t.pnl==null?'':colorClass(t.pnl)}">${pnlStr(t.pnl)}</td></tr>`;
       }
       trEl.innerHTML=h+'</tbody></table>';
+    }
+    const errs=s.errors||[];
+    const errEl=document.getElementById('errors-body');
+    if(errEl){
+      if(errs.length===0){errEl.innerHTML='';}
+      else{
+        let h='<table><thead><tr><th>Time</th><th>Error</th></tr></thead><tbody>';
+        for(const e of errs.slice(0,5)){
+          h+=`<tr><td class="gray">${e.time}</td><td class="red">${e.msg}</td></tr>`;
+        }
+        errEl.innerHTML=h+'</tbody></table>';
+        document.getElementById('errors-card').style.display='block';
+      }
     }
   }catch(e){document.getElementById('last-updated').textContent='Refresh failed: '+e.message;}
 }
@@ -117,7 +156,9 @@ def index():
 
 @app.route("/api/state")
 def api_state():
-    return jsonify(state.get())
+    data = state.get()
+    data["risk"] = get_risk_summary()
+    return jsonify(data)
 
 
 @app.route("/api/stop", methods=["POST"])

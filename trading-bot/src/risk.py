@@ -101,6 +101,18 @@ def reset_daily_loss():
     log.info("Daily loss counter reset manually")
 
 
+def get_risk_summary() -> dict:
+    limit = _daily_start_value * MAX_DAILY_LOSS_PCT if _daily_start_value else 0
+    tripped = daily_loss_exceeded()
+    return {
+        "daily_realized_loss": _daily_realized_loss,
+        "daily_loss_limit": limit,
+        "daily_loss_pct": (_daily_realized_loss / _daily_start_value * 100) if _daily_start_value else 0,
+        "daily_loss_limit_pct": MAX_DAILY_LOSS_PCT * 100,
+        "circuit_breaker_tripped": tripped,
+    }
+
+
 def should_stop_loss(entry_price: float, current_price: float) -> bool:
     drop = (entry_price - current_price) / entry_price
     return drop >= STOP_LOSS_PCT
