@@ -79,11 +79,13 @@ def run_all_filters(symbol: str, df=None) -> dict:
         log.info(f"[VIX] {vix_result['message']}")
 
     volume_result = {"confirmed": True, "message": ""}
-    if df is not None and "volume" in df.columns and len(df) >= 20:
-        current_vol = float(df.iloc[-1]["volume"])
-        avg_vol = float(df["volume"].tail(20).mean())
+    if df is not None and "volume" in df.columns and len(df) >= 21:
+        # Use the last *completed* bar (iloc[-2]) — iloc[-1] is the current
+        # in-progress bar and only has seconds/minutes of volume data.
+        completed_vol = float(df.iloc[-2]["volume"])
+        avg_vol = float(df["volume"].iloc[-21:-1].mean())
         if avg_vol > 0:
-            ratio = current_vol / avg_vol
+            ratio = completed_vol / avg_vol
             if ratio < 0.8:
                 volume_result = {"confirmed": False, "message": f"Low volume ({ratio:.0%} of avg)"}
 
