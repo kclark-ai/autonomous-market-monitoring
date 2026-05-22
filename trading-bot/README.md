@@ -60,7 +60,50 @@ Built entirely in Claude Code.
 
 ## Setup
 
-Clone the repo, install requirements, set these environment variables: ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL=https://paper-api.alpaca.markets. Then run bot.py and dashboard.py.
+**Requirements:** Python 3.10+, Mac or Linux (Windows works with minor adjustments)
+
+### 1. Get a free Alpaca paper trading account
+Go to [alpaca.markets](https://alpaca.markets) → sign up → go to **Paper Trading** → **API Keys** → generate a key pair. Keep both values handy.
+
+### 2. Clone the repo
+```bash
+git clone <repo-url>
+cd trading-bot
+```
+
+### 3. Create your environment file
+```bash
+cp .env.example .env
+```
+Open `.env` and fill in your `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`. Leave everything else as-is to start.
+
+### 4. Create a virtual environment and install dependencies
+```bash
+python3 -m venv venv
+source venv/bin/activate        # Mac/Linux
+# venv\Scripts\activate         # Windows
+pip install -r requirements.txt
+```
+
+### 5. Run the bot
+```bash
+python bot.py
+```
+
+The bot starts immediately, runs an initial scan, then scans every 60 minutes. The dashboard is available at `http://localhost:8080` (also accessible from other devices on your local network at `http://<your-ip>:8080`).
+
+### 6. (Optional) Run in the background
+```bash
+nohup python bot.py > logs/bot.log 2>&1 &
+```
+Logs go to `logs/bot.log`. Check status with `tail -f logs/bot.log`.
+
+### 7. (Optional) Telegram alerts
+Set up a Telegram bot at [t.me/BotFather](https://t.me/BotFather) to get a token, then run:
+```bash
+python -c "from src.notify import get_chat_id; get_chat_id()"
+```
+Add the token and chat ID to your `.env`. The bot will send trade alerts and accept commands like `/status`, `/positions`, `/stop`, `/start`.
 
 ---
 

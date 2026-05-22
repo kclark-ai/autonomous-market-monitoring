@@ -68,7 +68,14 @@ def get_signal(
 
     rsi_dip = rsi < RSI_OVERSOLD and macd_bullish
     ma_bounce = ma_cross_up and macd_bullish
+    # Trend-following: buy into an established uptrend with healthy RSI
+    # No MACD requirement — MACD oscillates too much on hourly bars
+    trend_momentum = (
+        in_uptrend
+        and 45 <= rsi < RSI_OVERBOUGHT
+        and c_sma_s > c_sma_l   # short MA above long MA (trend healthy)
+    )
 
-    if rsi_dip or ma_bounce:
+    if rsi_dip or ma_bounce or trend_momentum:
         return "buy"
     return "hold"

@@ -239,8 +239,16 @@ def run_crypto_tick(cash: float):
 
                 log.info(f"Price: ${price:,.2f} | RSI: {rsi:.1f} | Uptrend: {trend_ok}")
 
-                # Entry: RSI oversold + uptrend
-                if rsi < CRYPTO_RSI_OVERSOLD and trend_ok and cash > 0:
+                # Entry: RSI oversold dip OR trend-following momentum
+                sma_s = float(df.iloc[-1]["sma_short"]) if "sma_short" in df.columns else 0
+                sma_l = float(df.iloc[-1]["sma_long"])  if "sma_long"  in df.columns else 0
+                rsi_dip = rsi < CRYPTO_RSI_OVERSOLD and trend_ok
+                trend_momentum = (
+                    trend_ok
+                    and 45 <= rsi < CRYPTO_RSI_OVERBOUGHT
+                    and sma_s > sma_l
+                )
+                if (rsi_dip or trend_momentum) and cash > 0:
                     if _crypto_buy(symbol, price, cash, atr):
                         notify.send_trade("BUY (Crypto)", symbol, 0, price)
                         state.add_trade(symbol, "BUY (Crypto)", price, 0)

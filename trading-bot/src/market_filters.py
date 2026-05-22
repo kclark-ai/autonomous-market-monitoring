@@ -11,7 +11,7 @@ _cache: dict = {}
 VIX_CAUTION = 25
 VIX_PAUSE = 35
 VIX_EXTREME = 45
-GAP_UP_BLOCK = 0.025
+GAP_UP_BLOCK = 0.04  # Raised from 2.5% — normal market days can gap 2-3.5% without exhaustion
 
 
 def _cached(key: str, ttl_minutes: int, fetch_fn):
@@ -86,7 +86,7 @@ def run_all_filters(symbol: str, df=None) -> dict:
         avg_vol = float(df["volume"].iloc[-21:-1].mean())
         if avg_vol > 0:
             ratio = completed_vol / avg_vol
-            if ratio < 0.8:
+            if ratio < 0.5:  # Lowered from 70% — midday bars naturally run 50-70% of avg
                 volume_result = {"confirmed": False, "message": f"Low volume ({ratio:.0%} of avg)"}
 
     gap_result = {"block_buy": False, "message": ""}
