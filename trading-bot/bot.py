@@ -429,10 +429,17 @@ def main():
 
     # Fast stop-check loop: every STOP_INTERVAL_MINUTES (default: 1 min)
     schedule.every(STOP_INTERVAL_MINUTES).minutes.do(check_stops)
-    # Full equity signal scan: hourly during market hours
-    schedule.every().hour.at(":01").do(run_bot)
-    # Crypto scan: hourly, 24/7 (no market-hours gate)
-    schedule.every().hour.at(":03").do(_run_crypto)
+    # Full equity signal scan: every 60 minutes
+    # Use every(60).minutes instead of every().hour.at(":01") — the .at() form
+    # has proven unreliable and silently skips runs.
+    schedule.every(60).minutes.do(run_bot)
+    # Crypto scan: every 60 minutes, 24/7
+    schedule.every(60).minutes.do(_run_crypto)
+
+    # Run immediately on startup if market is open — don't wait 60 minutes
+    log.info("Running initial scan on startup...")
+    run_bot()
+    _run_crypto()
 
     while True:
         schedule.run_pending()
